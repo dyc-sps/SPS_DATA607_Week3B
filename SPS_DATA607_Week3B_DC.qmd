@@ -1,0 +1,133 @@
+---
+title: "SPS_DATA607_Week3B_DC"
+format: html
+editor: visual
+author: "David Chen"
+---
+
+# Window Functions
+
+1.  Find (or ask an LLM to generate!) a dataset that includes time series for two or more separate items.  For example, you could use end of day stock or cryptocurrency prices since Jan 1, 2022 for several instruments.
+
+2.  Use window functions (in SQL or dplyr) to calculate the year-to-date average and the six-day moving averages for each item. \## Approach
+
+I have daily temperature reports for four buildings. Each report contains 24 temperature readings collected every 15 minutes. I plan to combine these CSV files into a single dataset, then calculate the YTD average and a 6-day moving average.
+
+The 6-day moving average will help identify temperature drops, which may indicate boiler issues such as leaks or air vent locks in distributed steam pipes
+
+Data set from https://www.bitget.com/price/filecoin/historical-data
+
+## Running Code
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+mydata <- read.csv("https://raw.githubusercontent.com/dyc-sps/SPS_DATA607_Week3B/refs/heads/main/filecoin.csv")
+summary(mydata)
+head(mydata)
+glimpse(mydata)
+```
+
+Convert the timestamp column to UTC timezone format.
+
+```{r}
+mydata <- mydata %>%
+  mutate(timeCl = as.Date(as.POSIXct(mydata$timeClose / 1000, origin = "1970-01-01", tz = "UTC"))) %>%
+  mutate(timeOp = as.Date(as.POSIXct(mydata$timeOpen / 1000, origin = "1970-01-01", tz = "UTC"))) %>%
+  mutate(timeHi = as.Date(as.POSIXct(mydata$timeHigh / 1000, origin = "1970-01-01", tz = "UTC"))) %>%
+  mutate(timeLo = as.Date(as.POSIXct(mydata$timeLow / 1000, origin = "1970-01-01", tz = "UTC")))
+colnames(mydata)
+mydata_utc <- mydata %>%
+  select(timeopen=timeOp,priceOpen,priceClose,priceHigh,priceLow,volume) %>%
+  # select(timeopen=timeOp,timeclose=timeCl,timehigh=timeHi,timelow=timeLo,priceOpen,priceClose,priceHigh,priceLow,volume) %>%
+  mutate(volume_million = round(volume / 1e6, 2))
+summary(mydata_utc)
+```
+
+Create year and month fields to support grouping and aggregation.
+
+```{r}
+mydata_utc_monthly <- mydata_utc %>%
+  mutate(year = year(timeopen),month = month(timeopen,label = TRUE, abbr = TRUE)) %>%
+  group_by(year, month)%>%
+  summarise(avg_sales = mean(volume_million, na.rm = TRUE), .groups = "drop") 
+
+labels <- mydata_utc_monthly %>%
+  group_by(year) %>%
+  filter(month == max(month)) %>%
+  ungroup()
+  
+ggplot(mydata_utc_monthly, aes(x = month, y = avg_sales, group = year, color = factor(year))) +
+  geom_line() +
+  geom_point() +
+  #geom_text(data = labels,aes(label = year), hjust = -0.2, vjust = 0.5, size = 4) +
+  labs(title = "Monthly Sales by Year",
+       x = "Month",
+       y = "Avg Sales in Million",
+       color = "Year") +
+  scale_x_discrete(drop = FALSE) +
+  theme_minimal()
+```
+
+```{r,fig.show='hide'}
+ggplot(mydata_utc_monthly, aes(x = month, y = avg_sales, group = year, color = factor(year))) +
+  geom_line() +
+  geom_point() +
+  #geom_text(data = labels,aes(label = year), hjust = -0.2, vjust = 0.5, size = 4) +
+  labs(title = "Monthly Sales by Year",
+       x = "Month",
+       y = "Avg Sales in Million",
+       color = "Year") +
+  scale_x_discrete(drop = FALSE) +
+  
+  theme_minimal()+
+  
+  #facet_wrap(~year)
+  #facet_wrap(~year, ncol = 1, scales = "free_y")
+  #facet_wrap(~year, ncol = 1)
+facet_grid(year ~.)+
+theme(panel.spacing = unit(1.5, "lines"),
+        strip.text.y = element_text(size = 12))
+ggsave("monthly_sales.png", width = 8, height = 12)
+```
+
+![](monthly_sales.png)
+
+### 6-days moving average
+
+```{r,fig.show='hide'}
+#install.packages("slider")
+library(slider)
+mydata_utc <- mydata_utc %>%
+  arrange(timeopen)%>%
+  mutate(ma_6day = slide_dbl(volume_million, mean, .before = 5, .complete = TRUE))
+
+ggplot(mydata_utc, aes(x = timeopen)) +
+  geom_line(aes(y = volume_million, color = "Volume"), linewidth = 1) +
+  geom_line(aes(y = ma_6day, color = "6-Day MA"), linewidth = 1) +
+  scale_color_manual(values = c("Volume" = "steelblue", "6-Day MA" = "red")) +
+  labs(x = " Year ", y = "Volume in million", color = "Legend") +
+  theme_minimal()
+ggsave("m6_days_sales.png", width = 8, height = 6)
+```
+
+![](m6_days_sales.png)
+
+## Conclusion
+
+The 6-day moving average, calculated using window functions, provides a smoothed view of the volume over time, reducing the impact of daily fluctuations or anomalies. By applying the window function (slide_dbl), each data point incorporates the values of the previous 5 days plus the current day, giving a rolling average that highlights underlying trends.
+
+From the analysis:
+
+1.  Short-term spikes or drops in volume are effectively smoothed, making trends more visible.compare the blue line and red line in the last figure
+
+2.  Comparing the raw volume to the 6-day moving average allows us to quickly identify periods of sustained increase or decrease.
+
+3.  Window functions make it easy to compute such rolling aggregates without collapsing the dataset, preserving the granularity of daily data for further analysis.
+
+Overall, the 6-day moving average serves as a robust indicator of short-term trends, while window functions provide the flexibility to calculate it efficiently and consistently across the dataset.
+
+### LLMS used:
+
+• OpenAI. (2025). ChatGPT (Version 5.2) \[Large language model\]. https://chat.openai.com. Accessed Feb 14, 2026.
